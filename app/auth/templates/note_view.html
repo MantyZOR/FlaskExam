@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% from "_formhelpers.html" import render_field %} {# Для формы шаринга #}
+
+{% block content %}
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3">
+        {# --- Заголовок и значки --- #}
+        <h1 class="mb-2 mb-md-0">
+            {{ note.title }}
+            {% if not is_owner and is_collaborator %}
+                <span class="badge bg-secondary fs-6 align-middle ms-1" title="Общая заметка"><i class="bi bi-people-fill"></i></span>
+            {% endif %}
+             {% if note.is_public %}
+                <span class="badge bg-info fs-6 align-middle ms-1" title="Опубликована"><i class="bi bi-link-45deg"></i></span>
+            {% endif %}
+        </h1>
+
+        {# --- Кнопки действий --- #}
+        <div class="flex-shrink-0">
+            {# Экспорт доступен всем, у кого есть доступ #}
+            <a href="{{ url_for('main.export_note_md', note_id=note.id) }}" class="btn btn-sm btn-outline-info me-1" title="Экспорт в Markdown"><i class="bi bi-download"></i> .md</a>
+            <a href="{{ url_for('main.export_note_html', note_id=note.id) }}" class="btn btn-sm btn-outline-info me-1" title="Экспорт в HTML"><i class="bi bi-download"></i> .html</a>
+
+            {# Действия только для владельца #}
+            {% if is_owner %}
+                <a href="{{ url_for('main.edit_note', note_id=note.id) }}" class="btn btn-sm btn-secondary me-1" title="Редактировать"><i class="bi bi-pencil-fill"></i></a>
+
+                {# Кнопки Публикации/Отмены #}
+                {% if not note.is_public %}
+                <form action="{{ url_for('main.publish_note', note_id=note.id) }}" method="POST" style="display: inline;" class="me-1">
+                     {{ csrf_token()|safe }}
+                     <button type="submit" class="btn btn-sm btn-outline-success" title="Опубликовать"><i class="bi bi-share-fill"></i></button>
+                </form>
+                {% else %}
+                 <form action="{{ url_for('main.unpublish_note', note_id=note.id) }}" method="POST" style="display: inline;" class="me-1">
+                     {{ csrf_token()|safe }}
+                     <button type="submit" class="btn btn-sm btn-outline-warning" title="Снять с публикации"><i class="bi bi-eye-slash-fill"></i></button>
+                 </form>
+                {% endif %}
+
+                 {# Кнопка Удаления #}
+                 <form action="{{ url_for('main.delete_note', note_id=note.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заметку?');">
+                    {{ csrf_token()|safe }}
+                    <button type="submit" class="btn btn-sm btn-danger" title="Удалить"><i class="bi bi-trash-fill"></i></button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+    <hr>
+
+    {# --- Содержимое заметки --- #}
+    <div class="markdown-body mb-3"> {# Добавьте класс для стилизации Markdown, если есть #}
+        {{ html_content | safe }}
+    </div>
+    <hr>
+
+    {# --- Мета-информация --- #}
+    <div class="row small text-muted mb-3">
+        <div class="col-md-6">
+            Автор: {{ note.author.username }} <br>
+            Создано: <span title="{{ note.created_at.strftime('%Y-%m-%d %H:%M:%S') }}">{{ note.created_at.strftime('%d.%m.%Y %H:%M') }}</span> <br>
+            Обновлено: <span title="{{ note.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}">{{ note.updated_at.strftime('%d.%m.%Y %H:%M') }}</span>
+        </div>
+         <div class="col-md-6">
+            {% if note.notebook %}
+                Блокнот: <a href="{{ url_for('main.notes_in_notebook', notebook_id=note.notebook.id) }}" class="badge text-bg-primary text-decoration-none"><i class="bi bi-journal"></i> {{ note.notebook.name }}</a><br>
+            {% endif %}
+            {% if note.tags.count() > 0 %}
+                Теги:
+                {% for tag in note.tags %}
+                    <a href="{{ url_for('main.notes_by_tag', tag_name=tag.name) }}" class="badge text-bg-light text-decoration-none me-1">{{ tag.name }}</a>
+                {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+
+    {# --- Публичная ссылка (если есть) --- #}
+    {% if note.is_public and note.public_slug %}
+    <div class="alert alert-info mt-3" role="alert">
+      <div class="d-flex justify-content-between align-items-center">
+          <div>
+              <strong>Публичная ссылка:</strong>
+              <a href="{{ url_for('main.public_view_note', slug=note.public_slug, _external=True) }}" target="_blank" id="publicLink">{{ url_for('main.public_view_note', slug=note.public_slug, _external=True) }}</a>
+          </div>
+          <button type="button" class="btn btn-sm btn-light" onclick="copyPublicLink()" title="Копировать ссылку">
+              <i class="bi bi-clipboard"></i> Копировать
+          </button>
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Блок соавторства (только для владельца) --- #}
+    {% if is_owner %}
+    <div class="mt-4 p-3 border rounded bg-light">
+        <h5><i class="bi bi-people"></i> Управление доступом</h5>
+        {% if note.collaborators.count() > 0 %}
+            <p><strong>Соавторы:</strong></p>
+            <ul class="list-inline">
+            {% for user in note.collaborators %}
+                <li class="list-inline-item mb-1">
+                    <span class="badge text-bg-secondary me-1">
+                        {{ user.username }}
+                         <form action="{{ url_for('main.unshare_note', note_id=note.id, user_id=user.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Отозвать доступ для {{ user.username }}?');">
+                             {{ csrf_token()|safe }}
+                             <button type="submit" class="btn btn-close btn-close-white btn-sm" aria-label="Удалить доступ" title="Отозвать доступ"></button>
+                        </form>
+                    </span>
+                </li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p class="text-muted">Эта заметка доступна только вам.</p>
+        {% endif %}
+
+        {# Форма добавления соавтора #}
+        {% if share_form %}
+            <hr>
+            <h6>Поделиться с пользователем:</h6>
+             <form action="{{ url_for('main.share_note', note_id=note.id) }}" method="POST" class="row g-2 align-items-center">
+                 {{ share_form.hidden_tag() }}
+                <div class="col-auto flex-grow-1">
+                     {{ render_field(share_form.username, class="form-control form-control-sm", placeholder="Имя пользователя", label_visible=false) }}
+                </div>
+                 <div class="col-auto">
+                    {{ share_form.submit(class="btn btn-sm btn-outline-primary") }}
+                </div>
+            </form>
+        {% endif %}
+    </div>
+    {% endif %} {# Конец блока is_owner #}
+
+     <a href="{{ request.referrer or url_for('main.index') }}" class="btn btn-outline-secondary mt-4"><i class="bi bi-arrow-left"></i> Назад</a>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyPublicLink() {
+  var copyText = document.getElementById("publicLink");
+  if(copyText) {
+      navigator.clipboard.writeText(copyText.href).then(function() {
+        /* Можно добавить всплывающее сообщение об успехе */
+        alert("Ссылка скопирована в буфер обмена!");
+      }, function(err) {
+        alert("Не удалось скопировать ссылку: ", err);
+      });
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,8 @@
+Flask
+Flask-SQLAlchemy
+Flask-Migrate
+Flask-WTF
+python-dotenv
+markdown
+Flask-Login
+Flask-Bcrypt

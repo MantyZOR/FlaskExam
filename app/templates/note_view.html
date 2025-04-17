@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1>{{ note.title }}</h1>
+         <div>
+            <a href="{{ url_for('main.edit_note', note_id=note.id) }}" class="btn btn-secondary me-2">Редактировать</a>
+            <form action="{{ url_for('main.delete_note', note_id=note.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заметку?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-danger">Удалить</button>
+            </form>
+        </div>
+    </div>
+    <hr>
+    <div class="markdown-body">
+        {{ html_content | safe }} {# Используем safe, т.к. markdown генерирует HTML #}
+    </div>
+    <hr>
+    <p class="text-muted">
+        Создано: {{ note.created_at.strftime('%Y-%m-%d %H:%M') }} |
+        Обновлено: {{ note.updated_at.strftime('%Y-%m-%d %H:%M') }}
+    </p>
+     <a href="{{ url_for('main.index') }}" class="btn btn-outline-primary mt-3">Назад к списку</a>
+{% endblock %}
+
+{% block scripts %}
+{# Можно добавить CSS для стилизации Markdown, если нужно #}
+{# Например, github-markdown-css #}
+{% endblock %}

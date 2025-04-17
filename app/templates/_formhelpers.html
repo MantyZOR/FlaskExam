@@ -1,0 +1,20 @@
+{% macro render_field(field, label_visible=true) %}
+    {% if label_visible and field.type != 'HiddenField' and field.type != 'CSRFTokenField' %}
+      {{ field.label(class="form-label") }}
+    {% endif %}
+
+    {% set css_class = kwargs.pop('class', '') %}
+    {% if field.errors %}
+      {% set css_class = css_class + ' is-invalid' %}
+    {% endif %}
+
+    {{ field(class=css_class, **kwargs) }}
+
+    {% if field.errors %}
+        <div class="invalid-feedback d-block">
+          {% for error in field.errors %}
+            <span>{{ error }}</span><br>
+          {% endfor %}
+        </div>
+    {% endif %}
+{% endmacro %}

@@ -1,0 +1,40 @@
+<!-- START OF FILE note_form.html -->
+{% extends "base.html" %}
+{% from "_formhelpers.html" import render_field %} {# Импортируем макрос #}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+         <h1>{{ legend }}</h1>
+         <form method="POST" action=""> {# Убедитесь, что action пустой для отправки на тот же URL #}
+            {{ form.hidden_tag() }} {# CSRF токен и другие скрытые поля - ДОЛЖЕН БЫТЬ ВНУТРИ <form> #}
+
+            <div class="mb-3">
+                {{ render_field(form.title, class="form-control") }}
+            </div>
+            <div class="mb-3">
+                 {{ render_field(form.content, class="form-control", rows=15, placeholder="Введите содержимое в формате Markdown...") }}
+            </div>
+
+            {# --- ДОБАВЛЕННЫЕ ПОЛЯ --- #}
+             <div class="row g-3">
+                 <div class="col-md-6 mb-3">
+                     {{ render_field(form.tags, class="form-control", placeholder="например, работа, идеи, личное") }}
+                     <div class="form-text">Введите теги через запятую.</div>
+                 </div>
+                 <div class="col-md-6 mb-3">
+                     {{ render_field(form.notebook, class="form-select") }}
+                 </div>
+             </div>
+             {# --- КОНЕЦ ДОБАВЛЕННЫХ ПОЛЕЙ --- #}
+
+            <div class="mb-3">
+                {{ form.submit(class="btn btn-primary") }}
+                {# Используйте request.referrer для возврата на предыдущую страницу, если она есть #}
+                <a href="{{ request.referrer or url_for('main.index') }}" class="btn btn-secondary">Отмена</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+<!-- END OF FILE note_form.html -->

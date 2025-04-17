@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_formhelpers.html" import render_field %}
+
+{% block content %}
+    <div class="row justify-content-center">
+        <div class="col-lg-7">
+            <h1>{{ title or 'Импорт заметок' }}</h1>
+            <p class="lead">Загрузите файл в формате Markdown (.md, .markdown, .txt).</p>
+            <p>Если первая строка файла начинается с <code># </code> (решетка и пробел), она будет использована как заголовок заметки, а остальное содержимое файла станет текстом заметки. В противном случае, весь файл будет импортирован как текст заметки с заголовком по умолчанию.</p>
+
+            <form method="POST" enctype="multipart/form-data" class="mt-4"> {# Важно: enctype для файлов #}
+                {{ form.hidden_tag() }}
+                <div class="mb-3">
+                    {{ render_field(form.md_file, class="form-control") }}
+                </div>
+                <div class="mb-3">
+                    {{ form.submit(class="btn btn-primary") }}
+                     <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Отмена</a>
+                </div>
+            </form>
+        </div>
+    </div>
+{% endblock %}

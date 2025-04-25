@@ -1,23 +1,17 @@
-# app/main/routes.py
-from flask import (
-    Blueprint, render_template, request, flash, redirect, url_for, abort,
-    send_file, make_response, current_app # Добавлены send_file, make_response, current_app
-)
-from flask_login import login_required, current_user # Добавлены
-from sqlalchemy import or_ # Добавлено для сложных запросов
-from werkzeug.utils import secure_filename # Для безопасных имен файлов
+import io  # Для работы с файлами в памяти
 import markdown
-import io # Для работы с файлами в памяти
-import os # Если понадобится работа с файловой системой
+from flask import abort, current_app
+from flask import (
+    render_template, request, flash, redirect, url_for, send_file  # Добавлены send_file, make_response, current_app
+)
+from flask_login import login_required, current_user
+from sqlalchemy import or_  # Нужен для index
+from werkzeug.utils import secure_filename  # Для безопасных имен файлов
 
 from app import db
-from app.models import User, Note, Tag, Notebook, note_collaborators, note_tags # Импорт всех моделей
-# Убедитесь, что Blueprint импортируется из app.main, а не app
-# from app import main_bp as bp - если bp определен в app/__init__.py
-# Или если он определен в app/main/__init__.py:
-from app.main import bp
-# Импорт всех форм (предполагая, что они в app/forms.py)
 from app.forms import NoteForm, NotebookForm, ShareNoteForm, ImportForm
+from app.main import bp
+from app.models import User, Note, Tag, Notebook, note_collaborators, note_tags  # Импорт всех моделей
 
 
 # --- Вспомогательная функция для обработки тегов ---
@@ -42,27 +36,25 @@ def process_tags(tag_string):
     # Коммит не нужен здесь, он будет сделан после добавления/обновления заметки
     return tags
 
-# --- Маршруты Заметок (Обновленные) ---
+# --- Маршруты Заметок (Обновленные для Collaboration) ---
 
 @bp.route('/')
 @bp.route('/notes')
-@login_required # Заметки видны только авторизованным
+@login_required
 def index():
     """Показывает заметки, где пользователь автор ИЛИ соавтор."""
-    # Получаем ID заметок, где пользователь соавтор
-    collaborating_note_ids = db.session.query(note_collaborators.c.note_id)\
-        .filter_by(user_id=current_user.id)\
-        .subquery() # Используем subquery для чистоты
-
-    # Фильтруем заметки: автор = текущий пользователь ИЛИ ID заметки есть в списке соавторства
-    notes = Note.query.filter(
+    # Получаем ID заметок, где текущий пользователь является соавтором
+    # Это можно сделать через subquery или直接 через relationship
+    notes_query = Note.query.filter(
         or_(
-            Note.user_id == current_user.id,
-            Note.id.in_(collaborating_note_ids)
+            Note.user_id == current_user.id, # Заметки автора
+            Note.collaborators.any(User.id == current_user.id) # Заметки, где он соавтор
         )
-    ).order_by(Note.updated_at.desc()).all()
+    ).order_by(Note.updated_at.desc())
 
-    return render_template('main/index.html', notes=notes, title='Мои и общие заметки')
+    notes = notes_query.all()
+    # Передаем в шаблон app/templates/main/index.html
+    return render_template('index.html', notes=notes, title='Мои и общие заметки')
 
 @bp.route('/notes/new', methods=['GET', 'POST'])
 @login_required
@@ -96,34 +88,36 @@ def new_note():
              flash('Ошибка при создании заметки.', 'danger')
 
     # Если GET или ошибка валидации, рендерим форму
-    return render_template('main/note_form.html', title='Новая заметка', form=form, legend='Создать новую заметку')
+    return render_template('note_form.html', title='Новая заметка', form=form, legend='Создать новую заметку')
 
+
+# new_note - без изменений для коллаборации (создает только автор)
 
 @bp.route('/notes/<int:note_id>')
 @login_required
 def view_note(note_id):
     note = Note.query.get_or_404(note_id)
 
-    # Проверяем доступ: автор ИЛИ соавтор
     is_owner = (note.user_id == current_user.id)
-    is_collaborator = current_user in note.collaborators # Более читаемо
+    # Правильная проверка статуса соавтора
+    is_collaborator_check = note.collaborators.filter(User.id == current_user.id).count() > 0
 
-    if not is_owner and not is_collaborator:
-        abort(403) # Нет доступа
+    if not is_owner and not is_collaborator_check: # Используем правильную проверку
+        abort(403)
 
-    html_content = markdown.markdown(note.content, extensions=['fenced_code', 'tables', 'extra']) # Добавил 'extra' для доп. фич
-
-    # Форма для шаринга нужна только владельцу
+    html_content = markdown.markdown(note.content, extensions=['fenced_code', 'tables', 'extra'])
     share_form = ShareNoteForm() if is_owner else None
 
     return render_template(
-        'main/note_view.html',
+        'note_view.html',
         title=note.title,
         note=note,
         html_content=html_content,
         share_form=share_form,
         is_owner=is_owner,
-        is_collaborator=is_collaborator # Передаем для логики кнопок/отображения
+        is_collaborator=is_collaborator_check, # <--- ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС
+        # Этот флаг можно оставить, если он где-то нужен для отображения
+        is_shared_only=is_collaborator_check and not is_owner
     )
 
 @bp.route('/notes/<int:note_id>/edit', methods=['GET', 'POST'])
@@ -131,32 +125,56 @@ def view_note(note_id):
 def edit_note(note_id):
     note = Note.query.get_or_404(note_id)
 
-    # Редактировать может только автор
-    if note.user_id != current_user.id:
+    # --- ОБНОВЛЕННАЯ ПРОВЕРКА ДОСТУПА ---
+    is_owner = (note.user_id == current_user.id)
+    # Проверяем, является ли текущий пользователь соавтором
+    is_collaborator = note.collaborators.filter(User.id == current_user.id).count() > 0
+
+    # Запрещаем доступ, если пользователь НЕ владелец И НЕ соавтор
+    if not is_owner and not is_collaborator:
         abort(403)
+    # --- КОНЕЦ ОБНОВЛЕННОЙ ПРОВЕРКИ ---
 
     # При GET-запросе передаем объект note для предзаполнения
     # При POST-запросе передаем request.form для получения данных
     form = NoteForm(request.form if request.method == 'POST' else None, obj=note)
 
+    # Динамически заполняем поле notebook, если это не было сделано в __init__
+    # (NoteForm.__init__ уже должен это делать, но для надежности можно оставить)
+    if current_user.is_authenticated:
+         notebook_choices = [(nb.id, nb.name) for nb in Notebook.query.filter_by(user_id=current_user.id).order_by('name').all()]
+         form.notebook.choices = [(-1, '-- Без блокнота --')] + notebook_choices
+         # Устанавливаем текущее значение, если оно есть и форма не отправлена
+         if request.method == 'GET' and note.notebook_id is not None:
+             form.notebook.data = note.notebook_id
+         elif request.method == 'GET':
+              form.notebook.data = -1
+
+
     if form.validate_on_submit():
+        # --- Обновляем поля, доступные и соавторам ---
         note.title = form.title.data
         note.content = form.content.data
-
-        # Обновляем блокнот
-        if form.notebook.data != -1:
-            notebook = Notebook.query.filter_by(id=form.notebook.data, user_id=current_user.id).first()
-            if notebook:
-                note.notebook_id = form.notebook.data
-            else:
-                flash("Выбранный блокнот не найден или не принадлежит вам. Связь с блокнотом убрана.", "warning")
-                note.notebook_id = None # Сбрасываем связь
-        else:
-            note.notebook_id = None # Убираем связь, если выбрано "Без блокнота"
-
         # Обновляем теги
         processed_tags = process_tags(form.tags.data)
         note.tags = processed_tags # SQLAlchemy обновит связи
+
+        # --- Обновляем блокнот (ТОЛЬКО ДЛЯ АВТОРА) ---
+        # Решаем, что менять блокнот может только владелец для упрощения
+        if is_owner:
+            if form.notebook.data != -1:
+                # Автор может выбрать только СВОЙ блокнот
+                notebook = Notebook.query.filter_by(id=form.notebook.data, user_id=current_user.id).first()
+                if notebook:
+                    note.notebook_id = form.notebook.data
+                else:
+                    # Если автор выбрал несуществующий/чужой блокнот
+                    flash("Выбранный блокнот не найден или не принадлежит вам. Связь с блокнотом убрана.", "warning")
+                    note.notebook_id = None # Сбрасываем связь
+            else:
+                # Автор выбрал "Без блокнота"
+                note.notebook_id = None # Убираем связь
+        # Если редактирует соавтор, поле notebook_id не трогаем
 
         # updated_at обновится автоматически благодаря onupdate
         try:
@@ -169,12 +187,11 @@ def edit_note(note_id):
              flash('Ошибка при обновлении заметки.', 'danger')
 
     elif request.method == 'GET':
-        # Предзаполняем теги вручную (SelectField заполняется в __init__ формы)
+        # Предзаполняем теги вручную (SelectField заполняется выше или в __init__)
         form.tags.data = ', '.join([tag.name for tag in note.tags])
 
-    return render_template('main/note_form.html', title='Редактировать заметку',
+    return render_template('note_form.html', title='Редактировать заметку',
                            form=form, legend=f'Редактировать: {note.title}')
-
 
 @bp.route('/notes/<int:note_id>/delete', methods=['POST']) # Только POST
 @login_required
@@ -202,7 +219,7 @@ def delete_note(note_id):
 @login_required
 def list_notebooks():
     notebooks = Notebook.query.filter_by(user_id=current_user.id).order_by(Notebook.name).all()
-    return render_template('main/notebooks.html', notebooks=notebooks, title="Мои блокноты")
+    return render_template('notebooks.html', notebooks=notebooks, title="Мои блокноты")
 
 @bp.route('/notebooks/new', methods=['GET', 'POST'])
 @login_required
@@ -220,7 +237,7 @@ def new_notebook():
             db.session.rollback()
             current_app.logger.error(f"Ошибка создания блокнота: {e}")
             flash('Ошибка при создании блокнота.', 'danger')
-    return render_template('main/notebook_form.html', form=form, title="Новый блокнот", legend="Создать блокнот")
+    return render_template('notebook_form.html', form=form, title="Новый блокнот", legend="Создать блокнот")
 
 @bp.route('/notebooks/<int:notebook_id>/edit', methods=['GET', 'POST'])
 @login_required
@@ -239,7 +256,7 @@ def edit_notebook(notebook_id):
             db.session.rollback()
             current_app.logger.error(f"Ошибка обновления блокнота {notebook_id}: {e}")
             flash('Ошибка при обновлении блокнота.', 'danger')
-    return render_template('main/notebook_form.html', form=form, title="Редактировать блокнот", legend=f"Редактировать: {notebook.name}")
+    return render_template('notebook_form.html', form=form, title="Редактировать блокнот", legend=f"Редактировать: {notebook.name}")
 
 @bp.route('/notebooks/<int:notebook_id>/delete', methods=['POST'])
 @login_required
@@ -263,7 +280,7 @@ def notes_in_notebook(notebook_id):
     # Показываем заметки только из этого блокнота
     # Доступ (автор/соавтор) проверяется при отображении списка или при переходе к заметке
     notes = Note.query.filter_by(notebook_id=notebook.id).order_by(Note.updated_at.desc()).all()
-    return render_template('main/index.html', notes=notes, notebook_context=notebook, title=f'Заметки в блокноте: {notebook.name}')
+    return render_template('index.html', notes=notes, notebook_context=notebook, title=f'Заметки в блокноте: {notebook.name}')
 
 
 # --- Маршруты Тегов ---
@@ -287,64 +304,68 @@ def notes_by_tag(tag_name):
         )
     ).order_by(Note.updated_at.desc()).all()
 
-    return render_template('main/index.html', notes=notes, tag_context=tag, title=f'Заметки с тегом: {tag.name}')
+    return render_template('index.html', notes=notes, tag_context=tag, title=f'Заметки с тегом: {tag.name}')
 
 
 # --- Маршруты Сотрудничества (Collaboration) ---
-
 @bp.route('/notes/<int:note_id>/share', methods=['POST'])
 @login_required
 def share_note(note_id):
     note = Note.query.get_or_404(note_id)
-    if note.user_id != current_user.id: # Только автор может делиться
+    # >>> ПРОВЕРКА: Только автор может делиться <<<
+    if note.user_id != current_user.id:
         abort(403)
 
-    # Используем форму для валидации и CSRF
-    form = ShareNoteForm()
+    form = ShareNoteForm() # Используем форму для валидации CSRF и базовых проверок
     if form.validate_on_submit():
+        # Валидаторы в форме уже проверили существование пользователя и не-самого-себя
         user_to_share = User.query.filter(User.username.ilike(form.username.data)).first()
-        # Дополнительные проверки (не найден, не сам себе, не добавлен ли уже) - теперь в форме
-        note.collaborators.append(user_to_share)
-        try:
-            db.session.commit()
-            flash(f'Заметка теперь доступна пользователю "{user_to_share.username}".', 'success')
-            # TODO: Здесь можно добавить уведомление для user_to_share (если нужна система уведомлений)
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Ошибка шаринга заметки {note_id} для user {user_to_share.username}: {e}")
-            flash(f'Ошибка при добавлении соавтора.', 'danger')
+
+        # >>> ДОБАВЛЕНА ПРОВЕРКА: Не является ли пользователь уже соавтором? <<<
+        if note.collaborators.filter(User.id == user_to_share.id).count() > 0:
+            flash(f'Пользователь "{user_to_share.username}" уже является соавтором этой заметки.', 'warning')
+        else:
+            # Если все проверки пройдены, добавляем в соавторы
+            note.collaborators.append(user_to_share)
+            try:
+                db.session.commit()
+                flash(f'Заметка "{note.title}" теперь доступна пользователю "{user_to_share.username}".', 'success')
+            except Exception as e:
+                db.session.rollback()
+                current_app.logger.error(f"Ошибка шаринга заметки {note_id} для {user_to_share.username}: {e}")
+                flash('Не удалось поделиться заметкой из-за ошибки.', 'danger')
     else:
-        # Выводим ошибки валидации формы
+        # Если форма не прошла базовую валидацию (не найден, сам себя, пустое поле)
         for field, errors in form.errors.items():
             for error in errors:
-                flash(f"Ошибка в поле '{getattr(form, field).label.text}': {error}", 'danger')
+                flash(f"{getattr(form, field).label.text if hasattr(getattr(form, field), 'label') else field}: {error}", 'danger')
 
     return redirect(url_for('main.view_note', note_id=note_id))
-
 
 @bp.route('/notes/<int:note_id>/unshare/<int:user_id>', methods=['POST'])
 @login_required
 def unshare_note(note_id, user_id):
-    """Удаляет пользователя из соавторов."""
     note = Note.query.get_or_404(note_id)
-    if note.user_id != current_user.id: # Только автор может управлять доступом
+    # >>> ПРОВЕРКА: Только автор может отменять доступ <<<
+    if note.user_id != current_user.id:
         abort(403)
-    # CSRF защита через токен в форме шаблона note_view.html
-    # csrf.protect() - может быть применен глобально или через request hook
+
+    # CSRF-защита сработает автоматически, т.к. вызывается из формы с токеном
 
     user_to_unshare = User.query.get_or_404(user_id)
 
-    if user_to_unshare in note.collaborators:
-        note.collaborators.remove(user_to_unshare)
+    # Проверяем, действительно ли этот пользователь соавтор
+    if note.collaborators.filter(User.id == user_to_unshare.id).count() > 0:
+        note.collaborators.remove(user_to_unshare) # Удаляем из связи
         try:
             db.session.commit()
-            flash(f'Доступ для пользователя "{user_to_unshare.username}" отозван.', 'success')
+            flash(f'Доступ к заметке для пользователя "{user_to_unshare.username}" отозван.', 'success')
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Ошибка отмены шаринга заметки {note_id} для user {user_id}: {e}")
-            flash(f'Ошибка при отмене доступа.', 'danger')
+            flash('Не удалось отозвать доступ из-за ошибки.', 'danger')
     else:
-        flash(f'Пользователь "{user_to_unshare.username}" не является соавтором этой заметки.', 'info')
+        flash(f'Пользователь "{user_to_unshare.username}" не является соавтором этой заметки.', 'warning')
 
     return redirect(url_for('main.view_note', note_id=note_id))
 
@@ -400,7 +421,7 @@ def public_view_note(slug):
     note = Note.query.filter_by(public_slug=slug, is_public=True).first_or_404()
     html_content = markdown.markdown(note.content, extensions=['fenced_code', 'tables', 'extra'])
     # Используем отдельный шаблон для публичного просмотра
-    return render_template('main/public_note_view.html', note=note, html_content=html_content, title=note.title)
+    return render_template('public_note_view.html', note=note, html_content=html_content, title=note.title)
 
 
 # --- Маршруты Импорта/Экспорта ---
@@ -409,9 +430,14 @@ def public_view_note(slug):
 @login_required
 def export_note_md(note_id):
     note = Note.query.get_or_404(note_id)
-    # Доступ: автор или соавтор
-    if note.user_id != current_user.id and current_user not in note.collaborators:
-        abort(403)
+
+    # >>> ИСПРАВЛЕННАЯ ПРОВЕРКА ДОСТУПА: Автор ИЛИ Соавтор <<<
+    is_owner = note.user_id == current_user.id
+    # Используем .any() для эффективной проверки наличия пользователя в соавторах
+    is_collaborator = note.collaborators.filter(User.id == current_user.id).count() > 0
+
+    if not is_owner and not is_collaborator:
+        abort(403) # Доступ запрещен
 
     # Формируем безопасное имя файла
     filename = secure_filename(note.title[:50].replace(' ', '_') or 'note') + '.md'
@@ -432,12 +458,16 @@ def export_note_md(note_id):
 @login_required
 def export_note_html(note_id):
     note = Note.query.get_or_404(note_id)
-    # Доступ: автор или соавтор
-    if note.user_id != current_user.id and current_user not in note.collaborators:
-        abort(403)
+
+    # >>> ИСПРАВЛЕННАЯ ПРОВЕРКА ДОСТУПА: Автор ИЛИ Соавтор <<<
+    is_owner = note.user_id == current_user.id
+    is_collaborator = note.collaborators.filter(User.id == current_user.id).count() > 0
+
+    if not is_owner and not is_collaborator:
+        abort(403) # Доступ запрещен
 
     html_content = markdown.markdown(note.content, extensions=['fenced_code', 'tables', 'extra'])
-    # Создаем полный HTML документ со стилями
+    # Создаем полный HTML документ со стилями (ваш код HTML здесь без изменений)
     full_html = f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -482,12 +512,6 @@ def export_note_html(note_id):
 @login_required
 def import_notes():
     form = ImportForm()
-    # Динамическая загрузка блокнотов для формы импорта (если поле добавлено)
-    # if current_user.is_authenticated:
-    #    form.notebook.choices = [(-1, '-- Без блокнота --')] + [(nb.id, nb.name) for nb in Notebook.query.filter_by(user_id=current_user.id).order_by('name').all()]
-    # else:
-    #    form.notebook.choices = [(-1, '-- Без блокнота --')]
-
     if form.validate_on_submit():
         f = form.md_file.data
         filename = secure_filename(f.filename)
@@ -528,21 +552,21 @@ def import_notes():
             current_app.logger.error(f"Ошибка импорта файла {filename}: {e}", exc_info=True) # Логируем с трейсбеком
             flash(f'Произошла непредвиденная ошибка при импорте файла. См. логи сервера.', 'danger')
 
-    return render_template('main/import.html', title='Импорт заметок', form=form)
+    return render_template('import.html', title='Импорт заметок', form=form)
 
 
 # --- Обработчики ошибок ---
 @bp.app_errorhandler(403) # Обработчик для всего приложения
 def forbidden_error(error):
-    return render_template('errors/403.html'), 403
+    return render_template('403.html'), 403
 
 @bp.app_errorhandler(404)
 def not_found_error(error):
-    return render_template('errors/404.html'), 404
+    return render_template('404.html'), 404
 
 @bp.app_errorhandler(500)
 def internal_error(error):
     db.session.rollback() # Откатываем транзакцию
     # Логирование ошибки можно добавить здесь, если не настроено глобально
     current_app.logger.error(f"Server Error: {error}", exc_info=True)
-    return render_template('errors/500.html'), 500
+    return render_template('500.html'), 500

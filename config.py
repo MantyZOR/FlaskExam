@@ -12,4 +12,3 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
         'sqlite:///' + os.path.join(basedir, 'app.db') # База данных SQLite в корне проекта
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    # Дополнительные настройки, если понадобятся

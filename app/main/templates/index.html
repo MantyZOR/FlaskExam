@@ -52,7 +52,7 @@
                     <div class="flex-shrink-0 ms-md-3 mt-2 mt-md-0">
                         <a href="{{ url_for('main.edit_note', note_id=note.id) }}" class="btn btn-sm btn-outline-secondary me-1" title="Редактировать"><i class="bi bi-pencil-fill"></i></a>
                         <form action="{{ url_for('main.delete_note', note_id=note.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заметку?');">
-                            {{ csrf_token()|safe }}
+                            {{ csrf_token() }}
                             <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить"><i class="bi bi-trash-fill"></i></button>
                         </form>
                     </div>

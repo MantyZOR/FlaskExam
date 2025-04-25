@@ -12,7 +12,7 @@ def make_shell_context():
     return {'db': db, 'User': User, 'Note': Note}
 
 if __name__ == '__main__':
-    # При первом запуске или изменениях в моделях, не забудьте выполнить миграции
+    # При первом запуске:
     # export FLASK_APP=run.py (или set FLASK_APP=run.py в Windows)
     # flask db init (только один раз)
     # flask db migrate -m "Initial migration with Note table"

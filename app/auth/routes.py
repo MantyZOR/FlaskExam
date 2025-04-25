@@ -1,10 +1,11 @@
 from flask import render_template, flash, redirect, url_for, request
 from flask_login import login_user, logout_user, current_user, login_required
-from werkzeug.urls import url_parse
-from app import db # bcrypt (если используете)
-from app.auth import bp # Импортируем Blueprint
+from urllib.parse import urlsplit
+from app import db  # bcrypt (если используете)
+from app.auth import bp  # Импортируем Blueprint
 from app.auth.forms import LoginForm, RegistrationForm
 from app.models import User
+
 
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
@@ -23,7 +24,7 @@ def login():
         flash(f'Добро пожаловать, {user.username}!', 'success')
         # Перенаправление на запрошенную страницу или на главную
         next_page = request.args.get('next')
-        if not next_page or url_parse(next_page).netloc != '':
+        if not next_page or urlsplit(next_page).netloc != '':
             next_page = url_for('main.index')
         return redirect(next_page)
     return render_template('auth/login.html', title='Вход', form=form)

@@ -6,6 +6,7 @@
         {# --- Заголовок и значки --- #}
         <h1 class="mb-2 mb-md-0">
             {{ note.title }}
+            {# Используем is_shared_only или not is_owner and is_collaborator для значка "Общая" #}
             {% if not is_owner and is_collaborator %}
                 <span class="badge bg-secondary fs-6 align-middle ms-1" title="Общая заметка"><i class="bi bi-people-fill"></i></span>
             {% endif %}
@@ -20,30 +21,36 @@
             <a href="{{ url_for('main.export_note_md', note_id=note.id) }}" class="btn btn-sm btn-outline-info me-1" title="Экспорт в Markdown"><i class="bi bi-download"></i> .md</a>
             <a href="{{ url_for('main.export_note_html', note_id=note.id) }}" class="btn btn-sm btn-outline-info me-1" title="Экспорт в HTML"><i class="bi bi-download"></i> .html</a>
 
-            {# Действия только для владельца #}
-            {% if is_owner %}
+            {# --- КНОПКА РЕДАКТИРОВАНИЯ (Автор ИЛИ Соавтор) --- #}
+            {% if is_owner or is_collaborator %}
                 <a href="{{ url_for('main.edit_note', note_id=note.id) }}" class="btn btn-sm btn-secondary me-1" title="Редактировать"><i class="bi bi-pencil-fill"></i></a>
+            {% endif %}
+            {# --- КОНЕЦ КНОПКИ РЕДАКТИРОВАНИЯ --- #}
 
+            {# --- ДЕЙСТВИЯ ТОЛЬКО ДЛЯ АВТОРА --- #}
+            {% if is_owner %}
                 {# Кнопки Публикации/Отмены #}
                 {% if not note.is_public %}
                 <form action="{{ url_for('main.publish_note', note_id=note.id) }}" method="POST" style="display: inline;" class="me-1">
-                     {{ csrf_token()|safe }}
-                     <button type="submit" class="btn btn-sm btn-outline-success" title="Опубликовать"><i class="bi bi-share-fill"></i></button>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <button type="submit" class="btn btn-sm btn-outline-success" title="Опубликовать"><i class="bi bi-share-fill"></i></button>
                 </form>
                 {% else %}
                  <form action="{{ url_for('main.unpublish_note', note_id=note.id) }}" method="POST" style="display: inline;" class="me-1">
-                     {{ csrf_token()|safe }}
+                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                      <button type="submit" class="btn btn-sm btn-outline-warning" title="Снять с публикации"><i class="bi bi-eye-slash-fill"></i></button>
                  </form>
                 {% endif %}
 
                  {# Кнопка Удаления #}
                  <form action="{{ url_for('main.delete_note', note_id=note.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заметку?');">
-                    {{ csrf_token()|safe }}
-                    <button type="submit" class="btn btn-sm btn-danger" title="Удалить"><i class="bi bi-trash-fill"></i></button>
-                </form>
+                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                     <button type="submit" class="btn btn-sm btn-danger" title="Удалить"><i class="bi bi-trash-fill"></i></button>
+                 </form>
             {% endif %}
+            {# --- КОНЕЦ ДЕЙСТВИЙ ТОЛЬКО ДЛЯ АВТОРА --- #}
         </div>
+        {# --- Конец кнопок действий --- #}
     </div>
     <hr>
 
@@ -100,7 +107,7 @@
                     <span class="badge text-bg-secondary me-1">
                         {{ user.username }}
                          <form action="{{ url_for('main.unshare_note', note_id=note.id, user_id=user.id) }}" method="POST" style="display: inline;" onsubmit="return confirm('Отозвать доступ для {{ user.username }}?');">
-                             {{ csrf_token()|safe }}
+                             {{ csrf_token() }}
                              <button type="submit" class="btn btn-close btn-close-white btn-sm" aria-label="Удалить доступ" title="Отозвать доступ"></button>
                         </form>
                     </span>
